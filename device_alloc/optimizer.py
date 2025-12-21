@@ -290,6 +290,11 @@ def optimize_contention(
         solver=solver,
         **kwargs
     )
+
+    import pickle
+    with open('/tmp/optimizer_1.pickle', mode='wb') as file:
+        pickle.dump(opt, file)
+
     if result := opt.optimize():
         return result  # Success: found solution without contention
     
@@ -304,6 +309,10 @@ def optimize_contention(
         solver=solver,
         **kwargs
     )
+
+    with open('/tmp/optimizer_2.pickle', mode='wb') as file:
+        pickle.dump(opt, file)
+
     return opt.optimize()
 
 
