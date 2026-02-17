@@ -262,6 +262,25 @@ def optimize_contention(
     solver: str = 'COIN_CMD',
     **kwargs
 ) -> tuple[dict[int, int], dict[int, int], float] | tuple[()]:
+    """
+    Run optimization with automatic contention fallback.
+    
+    Tries optimization without contention penalty first. If it fails,
+    retries with contention correction to spread VMs across clusters.
+    
+    Args:
+        devices: Collection of devices to assign
+        clusters: Collection of clusters to optimize over
+        min_capacity: Minimum total system capacity
+        max_capacity: Maximum total system capacity
+        contention_corr: Contention penalty multiplier (default: 2.0)
+        solver: MILP solver to use (default: 'COIN_CMD')
+        
+    Returns:
+        Tuple of (allocs, n_vms, objective) or empty tuple if optimization fails
+    """
+    # First attempt: no contention allowed (strict, better performance)
+    # Removes last energy breakpoint → clusters cannot reach full capacity
     opt = DeviceOptimizer(
         devices=devices,
         clusters=clusters,
@@ -271,9 +290,16 @@ def optimize_contention(
         solver=solver,
         **kwargs
     )
-    if result := opt.optimize():
-        return result
 
+    import pickle
+    with open('/tmp/optimizer_1.pickle', mode='wb') as file:
+        pickle.dump(opt, file)
+
+    if result := opt.optimize():
+        return result  # Success: found solution without contention
+    
+    # Second attempt: allow contention with penalty (relaxed, more flexible)
+    # Keeps last breakpoint but inflates energy consumption → clusters can reach full capacity
     opt = DeviceOptimizer(
         devices=devices,
         clusters=clusters,
@@ -283,6 +309,10 @@ def optimize_contention(
         solver=solver,
         **kwargs
     )
+
+    with open('/tmp/optimizer_2.pickle', mode='wb') as file:
+        pickle.dump(opt, file)
+
     return opt.optimize()
 
 

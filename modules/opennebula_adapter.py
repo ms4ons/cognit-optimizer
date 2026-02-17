@@ -29,6 +29,7 @@ def get_cluster_pool() -> tuple[list, dict[int, dict[str, Any]]]:
 def get_app_requirement(app_req_id: int) -> dict:
     """Retrieve app requirement from OpenNebula by ID using OnedServerProxy."""
     from device_alloc import OnedServerProxy
+    from device_alloc.xmlrpc_client import OneXMLRPCExistenceError
     from modules.logger import get_logger
     
     logger = get_logger(__name__)
@@ -42,6 +43,12 @@ def get_app_requirement(app_req_id: int) -> dict:
                 # Parse the template which contains the app requirements
                 template = result[DOCUMENT_KEY].get(TEMPLATE_KEY, {})
                 return template
+    except OneXMLRPCExistenceError as e:
+        logger.debug(
+            f"App requirement {app_req_id} not found in OpenNebula database. "
+            f"This app_req_id was most probably deleted when device_runtime stopped."
+        )
+        return {}
     except Exception as e:
         logger.error(f"Failed to fetch app requirement {app_req_id}: {e}")
         return {}

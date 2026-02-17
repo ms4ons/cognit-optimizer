@@ -51,11 +51,10 @@ def create_cluster_pool(oned_client: OnedServerProxy) -> list[Cluster]:
     data = oned_client(_CLUSTER_METHOD)['CLUSTER_POOL']['CLUSTER']
     clusters = _as_list(data)
     cluster_pool: list[Cluster] = []
-    interc_energy = inf
-    cont = 0.0
-    cont_energy = 0.0
-    cap = 0.0
     for cluster in clusters:
+        interc_energy = inf
+        cont = 0.0
+        cont_energy = 0.0
         n_vms = 0
         cpu_total = 0.0
         cluster_template = cluster.get('TEMPLATE', {})
@@ -64,25 +63,24 @@ def create_cluster_pool(oned_client: OnedServerProxy) -> list[Cluster]:
         host_ids = _as_list(cluster['HOSTS']['ID'])
         for host_id in host_ids:
             host = oned_client(_HOST_METHOD, int(host_id))['HOST']
+            template = host['TEMPLATE']
+            if 'CPU_ENERGY' not in template:
+                continue
             if (vm_ids := host['VMS']) is not None:
                 n_vms += len(_as_list(vm_ids['ID']))
             cpu_total += float(host['HOST_SHARE']['TOTAL_CPU']) / 100.0
-            template = host['TEMPLATE']
-            if 'CPU_ENERGY' in template:
-                cpu_energy = template['CPU_ENERGY']
-                host_energy = _parse_energy(cpu_energy)
-            else:
-                host_energy = [(0.0, 0.0), (cpu_total, 0.0)]
+            cpu_total = float(floor(cpu_total))
+            cpu_energy = template['CPU_ENERGY']
+            host_energy = _parse_energy(cpu_energy)
             interc_energy = min(interc_energy, host_energy[0][1])
             cont_cpu = _parse_contention(host['HOST_SHARE']['NUMA_NODES'])
             cont += cont_cpu
-            for cpu, energy in host_energy:
-                if isclose(cpu, cont_cpu, abs_tol=0.5):
-                    cont_energy += energy
-                    break
-            cap += floor(cpu_total)
+            cont_energy += host_energy[-1][1]
 
-        bpts = [(0.0, interc_energy), (cont, cont_energy), (cap, cont_energy)]
+        if cpu_total > cont:
+            bpts = [(0.0, interc_energy), (cont, cont_energy), (cpu_total, cont_energy)]
+        else:
+            bpts = [(0.0, interc_energy), (cpu_total, cont_energy)]
 
         cluster_ = Cluster(
             id=int(cluster['ID']),

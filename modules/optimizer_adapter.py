@@ -22,24 +22,31 @@ def _format_cluster_attributes(cluster_id: int, template: dict[str, Any]) -> str
             f"CARBON_INTENSITY={template.get('CARBON_INTENSITY')}")
 
 def create_devices_from_assignments(assignments: list[dict]) -> list:
-    """Create Device objects for the optimization algorithm from database assignments with per-device feasible clusters."""
+    """Create Device objects for the optimization algorithm from database assignments with per-device feasible clusters.
+    
+    Uses composite identifier (device_id:::flavour) to uniquely identify each device-flavour combination.
+    """
     from device_alloc import Device
     from modules.opennebula_adapter import get_feasible_clusters_for_device
 
     devices = []
     for assignment in assignments:
         device_id = assignment['device_id']
+        flavour = assignment['flavour']
         load = assignment['estimated_load']
-        capacity_load = 1.0  # TODO: Check with colleagues
         app_req_id = assignment['app_req_id']
+
+        # Create composite identifier: device_id:::flavour
+        # Using ::: as separator (unlikely to appear in device_id or flavour)
+        composite_id = f"{device_id}:::{flavour}"
 
         # Get feasible clusters for this device based on app requirements
         feasible_cluster_ids = get_feasible_clusters_for_device(app_req_id)
 
         device = Device(
-            id=device_id,
+            id=composite_id,
             load=load,
-            capacity_load=capacity_load,
+            capacity_load=load,
             cluster_ids=feasible_cluster_ids
         )
         devices.append(device)
@@ -48,36 +55,47 @@ def create_devices_from_assignments(assignments: list[dict]) -> list:
 
 def optimize_device_assignments(devices: list, clusters: list) -> tuple:
     """Run optimization algorithm on devices and clusters."""
-    from device_alloc import optimize
-
-    results = optimize(clusters=clusters, devices=devices, n_iter=5)
+    from device_alloc import optimize_contention
     
-    if results:
-        return results[0]
-    return ()
+    # Here we can call the optimizer method with multiple iterations and develop a logic to select the best result
+    # For now, we just call the optimize_contention method with one (or max 2) iteration
+    return optimize_contention(devices=devices, clusters=clusters)
 
 def run_optimization_with_db_updates() -> tuple | None:
     """Run complete optimization cycle with devices database updates."""
-    from modules.db_adapter import get_device_assignments
+    from modules.db_adapter import get_device_assignments, cleanup_old_records
     from modules.opennebula_adapter import get_cluster_pool, get_app_requirement
 
     try:
+        # Clean up old records (older than DB_CLEANUP_DAYS)
+        cleanup_old_records()
+        
         assignments = get_device_assignments()
         
         logger.info("=== DEVICE REQUIREMENTS ===")
+        valid_assignments = []
         for assignment in assignments:
             device_id = assignment['device_id']
             app_req_id = assignment['app_req_id']
             app_req = get_app_requirement(app_req_id)
             if not app_req:
-                logger.warning(f"{device_id}: Could not fetch app requirements (app_req_id={app_req_id})")
+                logger.info(f"Device {device_id}: Skipping device - app requirement {app_req_id} not found in OpenNebula")
                 continue
             logger.info(_format_device_requirements(device_id, app_req))
+            valid_assignments.append(assignment)
         
-        devices = create_devices_from_assignments(assignments)
+        if not valid_assignments:
+            logger.warning("No devices with valid app requirements found. Skipping optimization.")
+            return None
+        
+        devices = create_devices_from_assignments(valid_assignments)
 
         # Filter cluster pool to only include clusters that are feasible for at least one device
         all_feasible_cluster_ids = {cid for device in devices for cid in device.cluster_ids}
+        
+        logger.info(f"=== FEASIBILITY CHECK ===")
+        logger.info(f"Total devices: {len(devices)}")
+        logger.info(f"All feasible cluster IDs across all devices: {sorted(all_feasible_cluster_ids)}")
 
         clusters, cluster_lookup = get_cluster_pool()
         filtered_clusters = [c for c in clusters if c.id in all_feasible_cluster_ids]
@@ -102,8 +120,11 @@ def run_optimization_with_db_updates() -> tuple | None:
         if result:
             allocs, n_vms, objective = result
             logger.info("=== OPTIMIZATION RESULT ===")
-            for device_id, cluster_id in allocs.items():
-                logger.info(f"{device_id} -> Cluster {cluster_id}")
+            for composite_id, cluster_id in allocs.items():
+                # Parse composite_id (format: device_id:::flavour)
+                device_id = composite_id.split(':::')[0] if ':::' in composite_id else composite_id
+                flavour = composite_id.split(':::')[1] if ':::' in composite_id else None
+                logger.info(f"Device {device_id} - Flavour {flavour} --> Cluster {cluster_id}")
             
             scale_clusters_and_update_db(n_vms, allocs)
 
