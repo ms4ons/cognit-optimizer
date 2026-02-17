@@ -143,19 +143,22 @@ def scale_clusters_and_update_db(n_vms: dict[int, int], allocs: dict) -> int:
             executor.submit(scale_with_flavour, cid, flavour, target_cardinality): (cid, flavour)
             for (cid, flavour), target_cardinality in cluster_flavour_targets.items()
         }
-        scaled_clusters = set()
+        scaled_cluster_flavours = set()  # (cluster_id, flavour)
         for future in as_completed(future_map):
             cid, flavour, ok = future.result()
             if ok:
-                scaled_clusters.add(cid)
+                scaled_cluster_flavours.add((cid, flavour))
     
-    # Update DB for all successfully scaled clusters
-    for cid in scaled_clusters:
-        cluster_allocs = {dev_id: cluster_id for dev_id, cluster_id in allocs.items() if cluster_id == cid}
+    # Update DB only for successfully scaled (cluster_id, flavour) pairs
+    for cid, flavour in scaled_cluster_flavours:
+        cluster_allocs = {
+            dev_id: cluster_id for dev_id, cluster_id in allocs.items()
+            if cluster_id == cid and dev_id.split(':::', 1)[1] == flavour
+        }
         updated = update_device_cluster_assignments(cluster_allocs)
         total_updated += updated
         if updated > 0:
-            logger.info(f"Cluster {cid} scaled successfully: {updated} devices updated")
+            logger.info(f"Cluster {cid} ({flavour}) scaled successfully: {updated} devices updated")
     
     logger.info(f"Cluster scaling completed: {total_updated} total devices updated")
     return total_updated
