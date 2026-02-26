@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from math import isclose
 from typing import TYPE_CHECKING
 
@@ -340,3 +340,25 @@ def optimize(
             results.append(result)
 
     return results
+
+
+def scale(
+    devices: Collection[Device],
+    clusters: Collection[Cluster],
+    alloc: Mapping[int, int]
+) -> dict[int, float]:
+    # Returns `dict` with {Cluster ID: Scaling Factor}.
+
+    cluster_cpu: defaultdict[int, float] = defaultdict(float)
+    for device in devices:
+        cluster_id = alloc[device.id]
+        cluster_cpu[cluster_id] += device.load
+
+    scaling_factors: dict[int, float] = {}
+    for cluster in clusters:
+        cpu_usage = cluster_cpu[cluster.id]
+        factor = round(cpu_usage / cluster.contention, 2)
+        if factor > 1.0:
+            scaling_factors[cluster.id] = factor
+
+    return scaling_factors

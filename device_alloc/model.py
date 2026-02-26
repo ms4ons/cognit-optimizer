@@ -22,6 +22,7 @@ class Cluster:
     max_capacity: float
     energy: list[tuple[float, float]] = field(default_factory=list)
     carbon_intensity: float = 0.0
+    contention: float = float('nan')
 
 
 _CLUSTER_METHOD = 'one.clusterpool.info'
@@ -78,7 +79,11 @@ def create_cluster_pool(oned_client: OnedServerProxy) -> list[Cluster]:
             cont_energy += host_energy[-1][1]
 
         if cpu_total > cont:
-            bpts = [(0.0, interc_energy), (cont, cont_energy), (cpu_total, cont_energy)]
+            bpts = [
+                (0.0, interc_energy),
+                (cont, cont_energy),
+                (cpu_total, cont_energy)
+            ]
         else:
             bpts = [(0.0, interc_energy), (cpu_total, cont_energy)]
 
@@ -87,7 +92,8 @@ def create_cluster_pool(oned_client: OnedServerProxy) -> list[Cluster]:
             capacity=float(n_vms),
             max_capacity=cpu_total,
             energy=bpts,
-            carbon_intensity=ghg
+            carbon_intensity=ghg,
+            contention=cont
         )
         cluster_pool.append(cluster_)
     return cluster_pool
